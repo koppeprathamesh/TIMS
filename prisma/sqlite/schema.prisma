@@ -1,0 +1,431 @@
+// Local development and tests use SQLite. Production uses prisma/schema.prisma.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  status    String   @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  facilities        Facility[]
+  projects          Project[]
+  tools             Tool[]
+  memberships       OrganizationMembership[]
+  movements         InventoryMovement[]
+  auditEvents       AuditEvent[]
+}
+
+model Facility {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  code           String
+  description    String?
+  imageUrl       String?
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  departments  Department[]
+  locations    StorageLocation[]
+  machines     Machine[]
+  vendors      Vendor[]
+  movements    InventoryMovement[]
+  balances     InventoryBalance[]
+  admins       InventoryAdminFacility[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+}
+
+model Department {
+  id         String   @id @default(cuid())
+  facilityId String
+  name        String
+  code        String
+  description String?
+  imageUrl    String?
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  facility Facility  @relation(fields: [facilityId], references: [id])
+  projects Project[]
+  members  UserDepartmentAccess[]
+
+  @@unique([facilityId, code])
+  @@index([facilityId])
+}
+
+model Project {
+  id             String   @id @default(cuid())
+  organizationId String
+  departmentId   String?
+  name           String
+  code           String
+  status         String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  department   Department?  @relation(fields: [departmentId], references: [id])
+  movements    InventoryMovement[]
+  tools        Tool[]
+  transfersOut InventoryMovement[] @relation("TransferFromProject")
+  transfersIn  InventoryMovement[] @relation("TransferToProject")
+
+  @@unique([organizationId, code])
+  @@index([departmentId])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  displayName  String
+  // SUPER_ADMIN | INVENTORY_ADMIN | USER (validated in lib/authz/permissions.ts)
+  role         String   @default("USER")
+  status       String   @default("ACTIVE")
+  // Bumped on password reset/deactivation; session tokens carry the value they were issued with.
+  tokenVersion     Int       @default(0)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+  // Last workspace the user worked in; re-validated against live scope before it is restored.
+  lastFacilityId   String?
+  lastDepartmentId String?
+  lastProjectId    String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  passwordResets  PasswordResetToken[]
+  memberships     OrganizationMembership[]
+  adminFacilities InventoryAdminFacility[]  @relation("AdminFacilityUser")
+  grantedAdminFacilities InventoryAdminFacility[] @relation("AdminFacilityGrantor")
+  departmentAccess UserDepartmentAccess[]   @relation("DepartmentAccessUser")
+  grantedDepartmentAccess UserDepartmentAccess[] @relation("DepartmentAccessGrantor")
+  createdTools    Tool[]               @relation("ToolCreatedBy")
+  updatedTools    Tool[]               @relation("ToolUpdatedBy")
+  movementsActed  InventoryMovement[]  @relation("MovementActor")
+  approvals       Approval[]
+  auditEvents     AuditEvent[]
+  notifications   Notification[]
+}
+
+model OrganizationMembership {
+  id             String @id @default(cuid())
+  organizationId String
+  userId         String
+  status         String @default("ACTIVE")
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+}
+
+// Facilities an Inventory Admin may manage; their department/project/user scope derives from this.
+model InventoryAdminFacility {
+  id          String   @id @default(cuid())
+  userId      String
+  facilityId  String
+  grantedById String?
+  createdAt   DateTime @default(now())
+
+  user      User     @relation("AdminFacilityUser", fields: [userId], references: [id], onDelete: Cascade)
+  facility  Facility @relation(fields: [facilityId], references: [id])
+  grantedBy User?    @relation("AdminFacilityGrantor", fields: [grantedById], references: [id])
+
+  @@unique([userId, facilityId])
+  @@index([facilityId])
+}
+
+// Departments a standard User may view; provisioned by their managing Inventory Admin.
+model UserDepartmentAccess {
+  id           String   @id @default(cuid())
+  userId       String
+  departmentId String
+  grantedById  String?
+  createdAt    DateTime @default(now())
+
+  user       User       @relation("DepartmentAccessUser", fields: [userId], references: [id], onDelete: Cascade)
+  department Department @relation(fields: [departmentId], references: [id])
+  grantedBy  User?      @relation("DepartmentAccessGrantor", fields: [grantedById], references: [id])
+
+  @@unique([userId, departmentId])
+  @@index([departmentId])
+}
+
+model StorageLocation {
+  id           String @id @default(cuid())
+  facilityId   String
+  code         String
+  name         String
+  locationType String @default("GENERAL")
+  status       String @default("ACTIVE")
+
+  facility Facility @relation(fields: [facilityId], references: [id])
+  balances InventoryBalance[]
+  sourceLines      MovementLine[] @relation("SourceLocation")
+  destinationLines MovementLine[] @relation("DestinationLocation")
+  defaultForTools  Tool[]
+  units            ToolUnit[]
+
+  @@unique([facilityId, code])
+}
+
+model Tool {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  // Tools belong to a project so each project shows its own isolated tool set.
+  // Nullable for legacy/organization-wide tools that predate project scoping.
+  projectId          String?
+  code               String
+  name               String
+  drawingNumber      String?
+  specNumber         String?
+  description        String?
+  minimumQuantity    Int      @default(0)
+  totalStockCapacity Int      @default(0)
+  unitOfMeasure      String   @default("EA")
+  status             String   @default("ACTIVE")
+  defaultLocationId  String?
+  version            Int      @default(1)
+  createdById        String?
+  updatedById        String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  project      Project?     @relation(fields: [projectId], references: [id])
+  createdBy    User?         @relation("ToolCreatedBy", fields: [createdById], references: [id])
+  updatedBy    User?         @relation("ToolUpdatedBy", fields: [updatedById], references: [id])
+  defaultLocation StorageLocation? @relation(fields: [defaultLocationId], references: [id])
+
+  balances      InventoryBalance[]
+  movementLines MovementLine[]
+  units         ToolUnit[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([projectId])
+}
+
+model Machine {
+  id         String @id @default(cuid())
+  facilityId String
+  code       String
+  name       String
+  status     String @default("ACTIVE")
+
+  facility  Facility            @relation(fields: [facilityId], references: [id])
+  movements InventoryMovement[]
+
+  @@unique([facilityId, code])
+}
+
+model Vendor {
+  id         String @id @default(cuid())
+  facilityId String
+  code       String
+  name       String
+  status     String @default("ACTIVE")
+
+  facility  Facility            @relation(fields: [facilityId], references: [id])
+  movements InventoryMovement[]
+
+  @@unique([facilityId, code])
+}
+
+// Materialized, reconcilable stock balance per tool/location/stockStatus.
+model InventoryBalance {
+  id               String @id @default(cuid())
+  toolId           String
+  facilityId       String
+  locationId       String
+  stockStatus      String @default("AVAILABLE") // AVAILABLE | SHARPENING | SCRAPPED | RESERVED
+  onHandQuantity   Int    @default(0)
+  reservedQuantity Int    @default(0)
+  version          Int    @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tool     Tool     @relation(fields: [toolId], references: [id])
+  facility Facility @relation(fields: [facilityId], references: [id])
+  location StorageLocation @relation(fields: [locationId], references: [id])
+
+  @@unique([toolId, locationId, stockStatus])
+  @@index([toolId])
+  @@index([facilityId])
+}
+
+model InventoryMovement {
+  id                  String    @id @default(cuid())
+  organizationId      String
+  facilityId          String
+  movementNumber      String    @unique
+  movementType        String    // RECEIPT|ISSUE|RETURN|TRANSFER|ADJUSTMENT|SCRAP|SHARPEN_DISPATCH|SHARPEN_RETURN|REVERSAL
+  status              String    @default("POSTED") // DRAFT|POSTED|REVERSED|CANCELLED
+  projectId           String?
+  machineId           String?
+  vendorId            String?
+  actorId             String
+  reason              String?
+  remarks             String?
+  // Delivery challan reference; only captured for sharpening dispatch/return.
+  challanNumber       String?
+  // Goods receipt note; mandatory for receipts and sharpening dispatch/return.
+  grnNumber           String?
+  // TRANSFER only: the tool moved from one project to another within the same department.
+  transferFromProjectId String?
+  transferToProjectId   String?
+  idempotencyKey      String?   @unique
+  reversalOfMovementId String?
+  occurredAt          DateTime  @default(now())
+  postedAt            DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id])
+  facility     Facility     @relation(fields: [facilityId], references: [id])
+  project      Project?     @relation(fields: [projectId], references: [id])
+  machine      Machine?     @relation(fields: [machineId], references: [id])
+  vendor       Vendor?      @relation(fields: [vendorId], references: [id])
+  transferFromProject Project? @relation("TransferFromProject", fields: [transferFromProjectId], references: [id])
+  transferToProject   Project? @relation("TransferToProject", fields: [transferToProjectId], references: [id])
+  actor        User         @relation("MovementActor", fields: [actorId], references: [id])
+  reversalOf   InventoryMovement?  @relation("Reversal", fields: [reversalOfMovementId], references: [id])
+  reversals    InventoryMovement[] @relation("Reversal")
+
+  lines      MovementLine[]
+  approvals  Approval[]
+
+  @@index([organizationId, occurredAt])
+  @@index([facilityId, occurredAt])
+  @@index([projectId])
+  @@index([movementType])
+}
+
+// Atomic counters (e.g. movement numbers). Incremented inside the business transaction so
+// numbers are unique, gap-free on rollback and portable to Postgres (swap for a SEQUENCE there).
+model Sequence {
+  name  String @id
+  value Int    @default(0)
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model MovementLine {
+  id                   String  @id @default(cuid())
+  movementId           String
+  toolId               String
+  sourceLocationId      String?
+  destinationLocationId String?
+  quantity             Int
+  stockStatus          String  @default("AVAILABLE")
+  // ADJUSTMENT lines only: INCREASE | DECREASE (applied at destinationLocationId).
+  adjustmentDirection  String?
+  // The individual tool item (e.g. TOO5155-3) this line acted on, when the movement picks one.
+  toolUnitId           String?
+  createdAt            DateTime @default(now())
+
+  movement           InventoryMovement @relation(fields: [movementId], references: [id])
+  tool               Tool              @relation(fields: [toolId], references: [id])
+  toolUnit           ToolUnit?         @relation(fields: [toolUnitId], references: [id])
+  sourceLocation      StorageLocation? @relation("SourceLocation", fields: [sourceLocationId], references: [id])
+  destinationLocation StorageLocation? @relation("DestinationLocation", fields: [destinationLocationId], references: [id])
+
+  @@index([movementId])
+  @@index([toolId])
+  @@index([toolUnitId])
+}
+
+// One physical tool item. Receiving N of a tool creates N units (<code>-1 … <code>-N), each
+// tracked on its own: where it is and whether it is available, in sharpening, issued or scrapped.
+model ToolUnit {
+  id           String   @id @default(cuid())
+  toolId       String
+  sequence     Int
+  serialNumber String
+  facilityId   String
+  // Null while the unit is issued out of a store/rack.
+  locationId   String?
+  // AVAILABLE | SHARPENING | ISSUED | SCRAPPED | REMOVED
+  status       String   @default("AVAILABLE")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tool     Tool             @relation(fields: [toolId], references: [id])
+  location StorageLocation? @relation(fields: [locationId], references: [id])
+  lines    MovementLine[]
+
+  @@unique([toolId, sequence])
+  @@index([toolId, status])
+  @@index([facilityId, locationId, status])
+}
+
+model Approval {
+  id         String    @id @default(cuid())
+  movementId String
+  approverId String
+  status     String    @default("PENDING") // PENDING|APPROVED|REJECTED
+  reason     String?
+  decidedAt  DateTime?
+
+  movement InventoryMovement @relation(fields: [movementId], references: [id])
+  approver User              @relation(fields: [approverId], references: [id])
+}
+
+model AuditEvent {
+  id             String   @id @default(cuid())
+  organizationId String?
+  actorId        String?
+  action         String
+  resourceType   String
+  resourceId     String?
+  outcome        String   @default("SUCCESS") // SUCCESS|DENIED|ERROR
+  correlationId  String?
+  occurredAt     DateTime @default(now())
+  metadata       String?  // JSON-encoded structured metadata
+
+  organization Organization? @relation(fields: [organizationId], references: [id])
+  actor        User?         @relation(fields: [actorId], references: [id])
+
+  @@index([organizationId, occurredAt])
+  @@index([resourceType, resourceId])
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  type      String
+  title     String
+  message   String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}

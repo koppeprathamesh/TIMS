@@ -1,8 +1,7 @@
-import { PrismaClient } from "@prisma/client";
+import "dotenv/config";
+import { prisma } from "../src/lib/db";
 import { hashPassword } from "../src/lib/auth/password";
 import { ROLES } from "../src/lib/authz/permissions";
-
-const prisma = new PrismaClient();
 
 async function main() {
   console.log("Seeding development data (idempotent)...");
