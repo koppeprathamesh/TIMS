@@ -76,7 +76,8 @@ chosen and made easy to change.
   rate limited in process memory (and accounts lock after 5 failures, which
   is stored in the database). Behind several instances, repeat the per-IP limits
   at the reverse proxy/gateway, or move the counters to Redis/Postgres.
-- **SQLite → PostgreSQL** — see `docs/DEPLOYMENT.md` for the migration plan.
+- **Legacy SQLite data transfer** — see `docs/DEPLOYMENT.md` for the safe
+  migration plan to the active PostgreSQL database.
 - **OpenAPI document** — `docs/API.md` documents the contract by hand;
   generating a formal OpenAPI spec from the Zod schemas is a follow-up.
 - **SSO/OIDC/MFA** — the credential-based login is the implemented path;

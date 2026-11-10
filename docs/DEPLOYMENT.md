@@ -8,6 +8,8 @@ credentials across environments.
 
 ## Local development
 
+Set `DATABASE_URL` to a PostgreSQL database before running these commands.
+
 ```powershell
 npm install
 npm run prisma:migrate
@@ -19,7 +21,7 @@ npm run dev
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | yes | `file:./dev.db` (dev) or `postgresql://…` (production) |
+| `DATABASE_URL` | yes | PostgreSQL connection string, read by `prisma.config.ts` |
 | `JWT_SECRET` | yes | 16+ chars in dev; **32+ random chars, not a placeholder, in production** |
 | `APP_BASE_URL` | production | Public origin used in password-reset links (for example `https://tims.example.com`) |
 | `MAIL_WEBHOOK_URL` | optional | HTTPS endpoint that accepts `{ to, subject, text }` and sends the mail. Without it, reset links are logged in development and Super Admins are notified in production |
@@ -27,34 +29,31 @@ npm run dev
 
 Generate a secret with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`.
 
-## Switching to PostgreSQL for production
+## PostgreSQL migrations
 
-SQLite is for development only: it serializes all writers, has no row-level locking, and keeps
-the database in one local file. Plan the move like this:
+PostgreSQL is the active provider. Prisma CLI connection settings are in
+`prisma.config.ts`; the active migration history is `prisma/postgres/migrations`.
+The older SQLite migrations are not applied by this configuration and must not
+be copied into the PostgreSQL history. The initial PostgreSQL baseline is in
+`prisma/postgres/migrations`; run `npm run prisma:migrate` during development to
+apply it and create later migrations. Use `npx prisma migrate deploy` to apply
+committed migrations in shared or production environments.
 
-1. **Provision** PostgreSQL 15+ (managed service preferred), a least-privilege application role,
-   TLS, automated backups and point-in-time recovery.
-2. **Switch the provider** in `prisma/schema.prisma` to `provider = "postgresql"` and set
-   `DATABASE_URL`. Do not reuse the SQLite migration folder as-is: it contains SQLite-only SQL
-   (`DATETIME`, `PRAGMA`, table rebuilds). On a new empty database run
-   `npx prisma migrate dev --name init_postgres` once to generate a Postgres baseline, commit it
-   and replace the SQLite migrations (keep them in git history).
-3. **Copy data** (if there is any worth keeping) with a one-off script that reads through the
-   SQLite Prisma client and writes through the Postgres client in dependency order
-   (Organization, Facility, Department, Project, User, memberships and grants, StorageLocation,
-   Tool, InventoryBalance, InventoryMovement, MovementLine, Approval, AuditEvent, Notification),
-   then compare row counts and per-tool balances.
-4. **Verify** `SELECT`-level parity: for every tool, available/sharpening/scrapped totals and the
-   ledger must match before and after; run `npm test` against a Postgres test database.
-5. **Cut over** during a maintenance window: stop writes, run the copy, switch `DATABASE_URL`,
-   deploy, smoke-test sign-in, a movement and a reversal.
+## Moving legacy SQLite data
 
-What already works on both databases: all dashboard aggregation is done in SQL with standard
-quoted identifiers (`src/lib/inventory/stock.ts`); the schema uses no SQLite-only types; balances
-use optimistic versions; movement numbers come from the `Sequence` table, which increments
-atomically on Postgres as well. Optional follow-ups after the move: replace `Sequence` with a native
-`SEQUENCE`, use `SELECT … FOR UPDATE` instead of optimistic retries on hot balances, and move the
-rate-limit counters to a shared store.
+If existing SQLite data needs to be retained, copy it with a one-off script that reads through
+the SQLite Prisma client and writes through the Postgres client in dependency order
+(Organization, Facility, Department, Project, User, memberships and grants, StorageLocation,
+Tool, InventoryBalance, InventoryMovement, MovementLine, Approval, AuditEvent, Notification),
+then compare row counts and per-tool balances.
+Verify `SELECT`-level parity: for every tool, available/sharpening/scrapped totals and the
+ledger must match before and after; run `npm test` against a dedicated PostgreSQL test database.
+
+Dashboard aggregation uses standard quoted identifiers
+(`src/lib/inventory/stock.ts`); balances use optimistic versions; movement numbers come from the
+`Sequence` table, which increments atomically on PostgreSQL as well. Optional follow-ups include
+replacing `Sequence` with a native `SEQUENCE`, using `SELECT … FOR UPDATE` instead of optimistic
+retries on hot balances, and moving rate-limit counters to a shared store.
 
 Indexes added for scale: `InventoryMovement(organizationId, occurredAt)`,
 `InventoryMovement(facilityId, occurredAt)`, `InventoryMovement(projectId)` and
@@ -63,7 +62,7 @@ Indexes added for scale: `InventoryMovement(organizationId, occurredAt)`,
 ## Docker Compose (local Postgres, optional)
 
 ```yaml
-# docker-compose.yml (add if you want local Postgres instead of SQLite)
+# docker-compose.yml (optional local PostgreSQL)
 services:
   db:
     image: postgres:16-alpine
@@ -96,11 +95,8 @@ returns `200` for any request with a valid session and `401` otherwise
 
 ## Backup and restore
 
-- **SQLite (dev)**: the database is a single file (`prisma/dev.db` by
-  default). Stop the dev server and copy the file to back it up.
-- **PostgreSQL (production)**: use `pg_dump`/`pg_restore` on a scheduled
-  basis; store backups encrypted at rest. Document your retention policy
-  alongside your infrastructure-as-code.
+- **PostgreSQL**: use `pg_dump`/`pg_restore` on a scheduled basis; store backups encrypted at rest.
+  Document your retention policy alongside your infrastructure-as-code.
 
 ## Rollback
 

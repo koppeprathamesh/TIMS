@@ -11,7 +11,7 @@ Domain services (src/lib/inventory/engine.ts, lib/authz, lib/audit)
   |
 Prisma ORM
   |
-PostgreSQL (production) / SQLite (local dev) — same schema, no DB-specific features
+PostgreSQL — Prisma client connects through the PostgreSQL driver adapter
 ```
 
 Cross-cutting: structured console logging on the server, correlation IDs in
@@ -62,10 +62,8 @@ error responses, audit events persisted per mutating action.
 
 - **Modular monolith**, not microservices — the problem does not require
   independent scaling/deployment of modules at this stage.
-- **SQLite for local dev** — zero external dependency to start the app;
-  schema deliberately avoids Postgres-only or SQLite-only types so switching
-  the `provider` in `prisma/schema.prisma` is the only change required for
-  production.
+- **PostgreSQL** — the active schema and runtime use PostgreSQL. Legacy SQLite
+  migrations are kept separate from the active PostgreSQL migration history.
 - **JWT cookie carries identity + context only** — the role and the
   facility/department/project scope are always recomputed server-side per
   request from `User.role`, `InventoryAdminFacility` and

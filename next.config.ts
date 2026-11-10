@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   cacheComponents: true,
   partialPrefetching: true,
   experimental: {
+    agentUpgrade: "security",
     // Routes intentionally wait for live access checks, not an instant cached UI.
     // Keep instant validation available for routes that explicitly opt in.
     instantInsights: { validationLevel: "manual-warning" },

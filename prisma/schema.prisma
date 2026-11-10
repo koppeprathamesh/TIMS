@@ -1,15 +1,11 @@
 // Prisma schema for Tool Inventory Management System (TIMS)
-// Dev datasource: SQLite (see DATABASE_URL in .env). For production, switch
-// provider to "postgresql" — the schema avoids SQLite-only features so the
-// migration path to Postgres requires no structural changes.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider = "postgresql"
 }
 
 model Organization {

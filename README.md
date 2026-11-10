@@ -7,7 +7,7 @@ industrial tool rooms (reference context: "MX107-B4 Inventory").
 
 - Next.js 16 (App Router), React 19, TypeScript (strict)
 - Tailwind CSS v4 for styling, centralized design tokens in `src/app/globals.css`
-- Prisma ORM — SQLite for local development, schema is Postgres-portable
+- Prisma ORM with PostgreSQL; SQLite migration history is retained separately
 - JWT session cookie (httpOnly) for authentication; permissions always
   recomputed server-side from the database (never trusted from the token)
 - Zod for request validation
@@ -23,8 +23,8 @@ industrial tool rooms (reference context: "MX107-B4 Inventory").
 ```powershell
 cd tims
 npm install
-# .env is already provided with dev defaults (see .env.example for production)
-npm run prisma:migrate   # creates dev.db and applies migrations
+# Configure DATABASE_URL in .env (see .env.example)
+npm run prisma:migrate   # creates/applies PostgreSQL migrations
 npm run prisma:seed      # inserts deterministic development data
 ```
 
@@ -100,4 +100,5 @@ emails; they are sent from the shared mailbox (e.g. `noreply@etgroupindia.com`) 
   Super Admin can set a temporary password on the Users page.
 - **Prisma client errors after pulling schema changes** — run
   `npm run prisma:generate`.
-- **SQLite file locked** — stop the dev server before running migrations.
+- **Prisma cannot load the datasource URL** — `DATABASE_URL` is read by
+  `prisma.config.ts`; ensure it is a PostgreSQL connection string.

@@ -2,6 +2,9 @@
 
 ## Test commands
 
+Set `TEST_DATABASE_URL` to a dedicated PostgreSQL test database first. The
+test setup drops and recreates its `public` schema.
+
 ```powershell
 npm run test        # Vitest — unit + integration
 npm run lint         # ESLint
@@ -38,7 +41,7 @@ npm run build        # Next.js production build (includes TypeScript check)
   low-stock notifications (`tests/admin.test.ts`), and the adjustment approval
   workflow — hold, approve, reject, self-approval, scope, tenant isolation,
   negative-stock rollback, double-decision race (`tests/approvals.test.ts`).
-- **Integration** (against a disposable SQLite test database, migrated
+- **Integration** (against a disposable PostgreSQL test database, migrated
   fresh per run) — `tests/engine.test.ts` and `tests/audit-atomicity.test.ts`:
   - Receipt increases available stock; issue decreases it and is rejected when
     insufficient; transfer moves stock between locations atomically.
@@ -91,10 +94,10 @@ application as production-ready.
 ## Test fixtures
 
 Integration tests create their own organization/facility/location/tool
-rows per test (no reliance on `prisma/seed.ts`), and use a dedicated
-`DATABASE_URL` (`file:./test.db`, set in `vitest.config.ts` and built by
-`tests/global-setup.ts` via `prisma migrate deploy`) so they never touch the
-developer's `dev.db`.
+rows per test (no reliance on `prisma/seed.ts`). Set `TEST_DATABASE_URL` to a
+dedicated PostgreSQL database before running them. `tests/global-setup.ts`
+recreates that database's `public` schema and deploys migrations, so it must
+never point to the application or production database.
 
 ## Not yet implemented (documented gap)
 
